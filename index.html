@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>配管開先形状シミュレーター</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- PDF出力用ライブラリを追加 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <style>
+    .scrollbar-none::-webkit-scrollbar { display: none; }
+    .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
+    input[type="number"], select { font-size: 16px !important; }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 26px; height: 26px; border-radius: 9999px;
+      background: #2563eb; cursor: pointer; border: 3px solid #ffffff;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15); margin-top: -8px;
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 26px; height: 26px; border-radius: 9999px;
+      background: #2563eb; cursor: pointer; border: 3px solid #ffffff;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    }
+    input[type="range"]::-webkit-slider-runnable-track {
+      width: 100%; height: 10px; background: #cbd5e1; border-radius: 9999px;
+    }
+    input[type="range"]:active::-webkit-slider-thumb {
+      background: #1d4ed8; transform: scale(1.15); transition: transform 0.05s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(3px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in { animation: fadeIn 0.15s ease-out forwards; }
+
+    /* PDF・印刷用のスタイル設定（A4横向き・図面のみ出力） */
+    @media print {
+      body { background-color: #ffffff; margin: 0; padding: 0; height: 100vh; overflow: hidden; }
+      .no-print { display: none !important; }
+      .sticky { position: static !important; border: none !important; box-shadow: none !important; }
+      #drawing-svg { width: 100vw !important; height: 100vh !important; max-height: 100vh !important; padding: 0; margin: 0; object-fit: contain; }
+      @page { size: A4 landscape; margin: 0; }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 font-sans min-h-screen flex flex-col max-w-md mx-auto shadow-2xl relative pb-12">
+
+  <!-- --- ヘッダー --- -->
+  <header class="bg-slate-950 text-white px-4 py-3 flex items-center justify-between shrink-0 z-30 shadow-md no-print">
+    <div class="flex items-center space-x-2">
+      <svg class="text-blue-500 w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="2" y1="14" x2="6" y2="14"></line><line x1="10" y1="8" x2="14" y2="8"></line><line x1="18" y1="16" x2="22" y2="16"></line></svg>
+      <h1 class="text-xs font-black tracking-wider">配管開先形状シミュレーター</h1>
+      <span class="text-[10px] text-slate-400 font-bold ml-1">v10.01</span>
+    </div>
+    <div class="flex items-center space-x-3">
+      <button id="btn-pdf" class="px-2.5 py-1.5 bg-blue-600 rounded text-[10px] font-bold hover:bg-blue-500 text-white shadow-sm transition active:scale-95 flex items-center justify-center min-w-[60px]" title="A4横・PDF出力">
+        <svg class="w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+        <span>PDF</span>
+      </button>
+      <button id="btn-reset" class="p-1.5 bg-slate-800 rounded-full hover:bg-slate-700 transition active:scale-95" title="初期設定に戻す">
+        <svg class="text-white w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- --- 図面エリア --- -->
+  <div class="sticky top-0 bg-white border-b border-slate-200 z-20 shadow-md shrink-0 select-none">
+    <div id="error-overlay" class="absolute inset-0 bg-red-50/95 flex flex-col items-center justify-center p-4 z-20 text-center hidden">
+      <span class="text-red-500 font-bold mb-1">⚠️ 図面を生成できません</span>
+      <span id="error-message" class="text-xs text-red-700 font-semibold"></span>
+    </div>
+
+    <div id="pdf-wrapper" class="w-full bg-white p-1">
+      <svg id="drawing-svg" viewBox="0 0 600 340" class="w-full h-auto block bg-white">
+        <defs>
+          <pattern id="hatch-beveled" patternUnits="userSpaceOnUse" width="10" height="10" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="10" stroke="#cbd5e1" stroke-width="1" />
+          </pattern>
+          <marker id="arrow-end" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f172a" />
+          </marker>
+          <marker id="arrow-start" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M 10 0 L 0 5 L 10 10 z" fill="#0f172a" />
+          </marker>
+          <marker id="arrow-end-blue" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb" />
+          </marker>
+          <marker id="arrow-start-blue" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M 10 0 L 0 5 L 10 10 z" fill="#2563eb" />
+          </marker>
+        </defs>
+        <rect x="8" y="8" width="584" height="324" fill="none" stroke="#475569" stroke-width="1" rx="2" />
+        <rect x="11" y="11" width="578" height="318" fill="none" stroke="#f1f5f9" stroke-width="0.5" rx="1" />
+        <g id="svg-content"></g>
+      </svg>
+    </div>
+  </div>
+
+  <!-- --- ステータスバー --- -->
+  <div class="bg-slate-900 text-slate-300 px-4 py-2 flex justify-between items-center text-xs shrink-0 select-none no-print">
+    <span id="status-shape-name" class="font-extrabold text-white bg-blue-600 px-2.5 py-0.5 rounded-full text-[10px]">開先種別: V二段開先</span>
+    <span class="text-[10px] text-slate-400 font-bold">下部をスクロールして調整できます</span>
+  </div>
+
+  <!-- --- コントロールパネル --- -->
+  <div class="flex-1 flex flex-col bg-slate-150 p-3 space-y-3 no-print">
+
+    <!-- ①開先基本形状の選択 -->
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <button onclick="toggleSection('sec-shape', 'icon-shape')" class="w-full px-4 py-3 bg-slate-50 border-b flex justify-between items-center text-xs font-black text-slate-700">
+        <div class="flex items-center space-x-2">
+          <svg class="text-blue-500 w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
+          <span>① 開先基本形状の選択</span>
+        </div>
+        <span class="text-blue-600 font-bold flex items-center space-x-1">
+          <span id="selected-shape-lbl" class="text-xs">V二段開先</span>
+          <svg id="icon-shape" class="w-4 h-4 transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"></polyline></svg>
+        </span>
+      </button>
+      <div id="sec-shape" class="p-3 grid grid-cols-3 gap-2 bg-white animate-fade-in hidden">
+        <button onclick="changeShape('V')" id="btn-shape-V" class="btn-shape py-2 rounded-lg text-xs font-bold transition-all duration-150 active:scale-95 text-center border">V形</button>
+        <button onclick="changeShape('V2')" id="btn-shape-V2" class="btn-shape py-2 rounded-lg text-xs font-bold transition-all duration-150 active:scale-95 text-center border">V二段</button>
+        <button onclick="changeShape('V3')" id="btn-shape-V3" class="btn-shape py-2 rounded-lg text-xs font-bold transition-all duration-150 active:scale-95 text-center border">V三段</button>
+        <button onclick="changeShape('U')" id="btn-shape-U" class="btn-shape py-2 rounded-lg text-xs font-bold transition-all duration-150 active:scale-95 text-center border">U形</button>
+        <button onclick="changeShape('U2')" id="btn-shape-U2" class="btn-shape py-2 rounded-lg text-xs font-bold transition-all duration-150 active:scale-95 text-center border">U二段</button>
+      </div>
+    </div>
+
+    <!-- ②配管規格と寸法 -->
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <button onclick="toggleSection('sec-pipe', 'icon-pipe')" class="w-full px-4 py-3 bg-slate-50 border-b flex justify-between items-center text-xs font-black text-slate-700">
+        <div class="flex items-center space-x-2">
+          <svg class="text-blue-500 w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"></path><line x1="4" y1="22" x2="4" y2="15"></line></svg>
+          <span>② 配管JIS規格・基本寸法の調整</span>
+        </div>
+        <svg id="icon-pipe" class="w-4 h-4 text-slate-400 transition-transform duration-200" style="transform: rotate(180deg);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"></polyline></svg>
+      </button>
+      <div id="sec-pipe" class="p-3 space-y-3 bg-white border-t animate-fade-in">
+        <div class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2">
+          <label class="text-xs font-bold text-slate-700 block">JIS配管規格</label>
+          <select id="spec-selector" onchange="onSpecChange(this.value)" class="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"></select>
+          <span class="text-[9px] text-slate-400 font-bold block">※規格選択すると各数値が同期し、直接調整すると自動的に「カスタム」へ切り替わります</span>
+        </div>
+
+        <!-- OD -->
+        <div id="container-field-od" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+          <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">配管外径 (OD)</span>
+            <div class="flex items-center space-x-1"><input type="number" id="num-val-od" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('od', this.value)" onblur="commitField('od')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">mm</span></div>
+          </div>
+          <div class="flex items-center space-x-2 py-0.5 select-none" ontouchstart="event.stopPropagation()" ontouchmove="event.stopPropagation()"><span id="rng-min-od" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-od" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 outline-none touch-none" style="touch-action: none;" oninput="syncSlider('od', this.value)" onchange="commitField('od')" /><span id="rng-max-od" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+        </div>
+
+        <!-- ID -->
+        <div id="container-field-id" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+          <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">配管内径 (ID) [肉厚連動]</span>
+            <div class="flex items-center space-x-1"><input type="number" id="num-val-id" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('id', this.value)" onblur="commitField('id')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">mm</span></div>
+          </div>
+          <div class="flex items-center space-x-2 py-0.5 select-none" ontouchstart="event.stopPropagation()" ontouchmove="event.stopPropagation()"><span id="rng-min-id" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-id" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 outline-none touch-none" style="touch-action: none;" oninput="syncSlider('id', this.value)" onchange="commitField('id')" /><span id="rng-max-id" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+        </div>
+
+        <!-- t -->
+        <div id="container-field-t" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+          <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">配管肉厚 (t) [内径連動]</span>
+            <div class="flex items-center space-x-1"><input type="number" id="num-val-t" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('t', this.value)" onblur="commitField('t')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">mm</span></div>
+          </div>
+          <div class="flex items-center space-x-2 py-0.5 select-none" ontouchstart="event.stopPropagation()" ontouchmove="event.stopPropagation()"><span id="rng-min-t" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-t" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 outline-none touch-none" style="touch-action: none;" oninput="syncSlider('t', this.value)" onchange="commitField('t')" /><span id="rng-max-t" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+        </div>
+
+        <!-- f -->
+        <div id="container-field-f" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+          <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">ルート面高さ (f)</span>
+            <div class="flex items-center space-x-1"><input type="number" id="num-val-f" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('f', this.value)" onblur="commitField('f')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">mm</span></div>
+          </div>
+          <div class="flex items-center space-x-2 py-0.5 select-none" ontouchstart="event.stopPropagation()" ontouchmove="event.stopPropagation()"><span id="rng-min-f" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-f" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 outline-none touch-none" style="touch-action: none;" oninput="syncSlider('f', this.value)" onchange="commitField('f')" /><span id="rng-max-f" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+          <div class="flex items-center justify-between pt-1.5 border-t border-dashed border-slate-100"><span class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">許容公差</span>
+            <div class="flex items-center space-x-2">
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-blue-500">+</span><input type="number" step="0.1" id="num-tol-p-f" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('f', 'tp', this.value)" onblur="commitField('f')" onkeydown="handleKeyEnter(event)" /></div>
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-slate-500">-</span><input type="number" step="0.1" id="num-tol-m-f" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('f', 'tm', this.value)" onblur="commitField('f')" onkeydown="handleKeyEnter(event)" /></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- a1 -->
+        <div id="container-field-a1" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+          <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">第一開先角度 (θ1)</span>
+            <div class="flex items-center space-x-1"><input type="number" id="num-val-a1" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('a1', this.value)" onblur="commitField('a1')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">°</span></div>
+          </div>
+          <div class="flex items-center space-x-2 py-0.5 select-none" ontouchstart="event.stopPropagation()" ontouchmove="event.stopPropagation()"><span id="rng-min-a1" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-a1" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 outline-none touch-none" style="touch-action: none;" oninput="syncSlider('a1', this.value)" onchange="commitField('a1')" /><span id="rng-max-a1" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+          <div class="flex items-center justify-between pt-1.5 border-t border-dashed border-slate-100"><span class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">許容公差</span>
+            <div class="flex items-center space-x-2">
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-blue-500">+</span><input type="number" step="0.1" id="num-tol-p-a1" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('a1', 'tp', this.value)" onblur="commitField('a1')" onkeydown="handleKeyEnter(event)" /></div>
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-slate-500">-</span><input type="number" step="0.1" id="num-tol-m-a1" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('a1', 'tm', this.value)" onblur="commitField('a1')" onkeydown="handleKeyEnter(event)" /></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ③内径加工 -->
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <button onclick="toggleSection('sec-bore', 'icon-bore')" class="w-full px-4 py-3 bg-slate-50 border-b flex justify-between items-center text-xs font-black text-slate-700">
+        <div class="flex items-center space-x-2">
+          <svg class="text-blue-500 w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>
+          <span>③ 内径加工の調整 (カウンターボーア)</span>
+        </div>
+        <svg id="icon-bore" class="w-4 h-4 text-slate-400 transition-transform duration-200" style="transform: rotate(180deg);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"></polyline></svg>
+      </button>
+      <div id="sec-bore" class="p-3 space-y-3 bg-white border-t animate-fade-in">
+        <div class="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200 shadow-sm">
+          <span class="text-xs font-bold text-slate-700">内径加工（削り落とし）を行う</span>
+          <button id="btn-bore-toggle" onclick="toggleBore()" class="w-12 h-6 rounded-full bg-slate-300 relative transition-colors duration-200 focus:outline-none">
+            <span id="btn-bore-circle" class="w-5 h-5 rounded-full bg-white absolute top-0.5 left-0.5 shadow transition-transform duration-200"></span>
+          </button>
+        </div>
+        <div id="bore-params-group" class="space-y-3">
+          
+          <!-- idBore -->
+          <div id="container-field-idBore" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+            <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">指定内径寸法 (ID bore)</span>
+              <div class="flex items-center space-x-1"><input type="number" id="num-val-idBore" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('idBore', this.value)" onblur="commitField('idBore')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">mm</span></div>
+            </div>
+            <div class="flex items-center space-x-2 py-0.5 select-none" ontouchstart="event.stopPropagation()" ontouchmove="event.stopPropagation()"><span id="rng-min-idBore" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-idBore" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 outline-none touch-none" style="touch-action: none;" oninput="syncSlider('idBore', this.value)" onchange="commitField('idBore')" /><span id="rng-max-idBore" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+          </div>
+
+          <!-- lBore -->
+          <div id="container-field-lBore" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+            <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">内径加工平行代 (L bore)</span>
+              <div class="flex items-center space-x-1"><input type="number" id="num-val-lBore" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('lBore', this.value)" onblur="commitField('lBore')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">mm</span></div>
+            </div>
+            <div class="flex items-center space-x-2 py-0.5 select-none" ontouchstart="event.stopPropagation()" ontouchmove="event.stopPropagation()"><span id="rng-min-lBore" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-lBore" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 outline-none touch-none" style="touch-action: none;" oninput="syncSlider('lBore', this.value)" onchange="commitField('lBore')" /><span id="rng-max-lBore" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+          </div>
+
+          <!-- aBore -->
+          <div id="container-field-aBore" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+            <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">テーパー逃げ角度 (θ bore)</span>
+              <div class="flex items-center space-x-1"><input type="number" id="num-val-aBore" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('aBore', this.value)" onblur="commitField('aBore')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">°</span></div>
+            </div>
+            <div class="flex items-center space-x-2 py-0.5 select-none" ontouchstart="event.stopPropagation()" ontouchmove="event.stopPropagation()"><span id="rng-min-aBore" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-aBore" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 outline-none touch-none" style="touch-action: none;" oninput="syncSlider('aBore', this.value)" onchange="commitField('aBore')" /><span id="rng-max-aBore" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ④多段開先・R加工の調整 -->
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      <button onclick="toggleSection('sec-advanced', 'icon-advanced')" class="w-full px-4 py-3 bg-slate-50 border-b flex justify-between items-center text-xs font-black text-slate-700">
+        <div class="flex items-center space-x-2">
+          <svg class="text-blue-500 w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+          <span>④ 多段開先・R加工の調整</span>
+        </div>
+        <svg id="icon-advanced" class="w-4 h-4 text-slate-400 transition-transform duration-200" style="transform: rotate(180deg);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"></polyline></svg>
+      </button>
+      <div id="sec-advanced" class="p-3 space-y-3 bg-white border-t animate-fade-in">
+        
+        <!-- r -->
+        <div id="container-field-r" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+          <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">底部R半径 (r)</span>
+            <div class="flex items-center space-x-1"><input type="number" id="num-val-r" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('r', this.value)" onblur="commitField('r')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">mm</span></div>
+          </div>
+          <div class="flex items-center space-x-2 py-0.5 select-none"><span id="rng-min-r" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-r" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 touch-none" oninput="syncSlider('r', this.value)" onchange="commitField('r')" /><span id="rng-max-r" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+          <div class="flex items-center justify-between pt-1.5 border-t border-dashed border-slate-100"><span class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">許容公差</span>
+            <div class="flex items-center space-x-2">
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-blue-500">+</span><input type="number" step="0.1" id="num-tol-p-r" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('r', 'tp', this.value)" onblur="commitField('r')" /></div>
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-slate-500">-</span><input type="number" step="0.1" id="num-tol-m-r" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('r', 'tm', this.value)" onblur="commitField('r')" /></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- h1 -->
+        <div id="container-field-h1" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+          <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">第一段高さ (h1)</span>
+            <div class="flex items-center space-x-1"><input type="number" id="num-val-h1" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('h1', this.value)" onblur="commitField('h1')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">mm</span></div>
+          </div>
+          <div class="flex items-center space-x-2 py-0.5 select-none"><span id="rng-min-h1" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-h1" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 touch-none" oninput="syncSlider('h1', this.value)" onchange="commitField('h1')" /><span id="rng-max-h1" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+          <div class="flex items-center justify-between pt-1.5 border-t border-dashed border-slate-100"><span class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">許容公差</span>
+            <div class="flex items-center space-x-2">
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-blue-500">+</span><input type="number" step="0.1" id="num-tol-p-h1" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('h1', 'tp', this.value)" onblur="commitField('h1')" /></div>
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-slate-500">-</span><input type="number" step="0.1" id="num-tol-m-h1" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('h1', 'tm', this.value)" onblur="commitField('h1')" /></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- a2 -->
+        <div id="container-field-a2" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+          <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">第二開先角度 (θ2)</span>
+            <div class="flex items-center space-x-1"><input type="number" id="num-val-a2" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('a2', this.value)" onblur="commitField('a2')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">°</span></div>
+          </div>
+          <div class="flex items-center space-x-2 py-0.5 select-none"><span id="rng-min-a2" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-a2" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 touch-none" oninput="syncSlider('a2', this.value)" onchange="commitField('a2')" /><span id="rng-max-a2" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+          <div class="flex items-center justify-between pt-1.5 border-t border-dashed border-slate-100"><span class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">許容公差</span>
+            <div class="flex items-center space-x-2">
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-blue-500">+</span><input type="number" step="0.1" id="num-tol-p-a2" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('a2', 'tp', this.value)" onblur="commitField('a2')" /></div>
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-slate-500">-</span><input type="number" step="0.1" id="num-tol-m-a2" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('a2', 'tm', this.value)" onblur="commitField('a2')" /></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- h2 -->
+        <div id="container-field-h2" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+          <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">第二段高さ (h2)</span>
+            <div class="flex items-center space-x-1"><input type="number" id="num-val-h2" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('h2', this.value)" onblur="commitField('h2')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">mm</span></div>
+          </div>
+          <div class="flex items-center space-x-2 py-0.5 select-none"><span id="rng-min-h2" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-h2" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 touch-none" oninput="syncSlider('h2', this.value)" onchange="commitField('h2')" /><span id="rng-max-h2" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+          <div class="flex items-center justify-between pt-1.5 border-t border-dashed border-slate-100"><span class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">許容公差</span>
+            <div class="flex items-center space-x-2">
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-blue-500">+</span><input type="number" step="0.1" id="num-tol-p-h2" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('h2', 'tp', this.value)" onblur="commitField('h2')" /></div>
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-slate-500">-</span><input type="number" step="0.1" id="num-tol-m-h2" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('h2', 'tm', this.value)" onblur="commitField('h2')" /></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- a3 -->
+        <div id="container-field-a3" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+          <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">第三開先角度 (θ3)</span>
+            <div class="flex items-center space-x-1"><input type="number" id="num-val-a3" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('a3', this.value)" onblur="commitField('a3')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">°</span></div>
+          </div>
+          <div class="flex items-center space-x-2 py-0.5 select-none"><span id="rng-min-a3" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-a3" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 touch-none" oninput="syncSlider('a3', this.value)" onchange="commitField('a3')" /><span id="rng-max-a3" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+          <div class="flex items-center justify-between pt-1.5 border-t border-dashed border-slate-100"><span class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">許容公差</span>
+            <div class="flex items-center space-x-2">
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-blue-500">+</span><input type="number" step="0.1" id="num-tol-p-a3" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('a3', 'tp', this.value)" onblur="commitField('a3')" /></div>
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-slate-500">-</span><input type="number" step="0.1" id="num-tol-m-a3" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('a3', 'tm', this.value)" onblur="commitField('a3')" /></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- rj -->
+        <div id="container-field-rj" class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm space-y-2.5">
+          <div class="flex justify-between items-center"><span class="text-xs font-bold text-slate-700">段境界R半径 (Rj)</span>
+            <div class="flex items-center space-x-1"><input type="number" id="num-val-rj" class="w-18 p-1 text-center font-bold text-slate-800 bg-slate-50 border rounded text-xs outline-none" oninput="updateVal('rj', this.value)" onblur="commitField('rj')" onkeydown="handleKeyEnter(event)" /><span class="text-xs text-slate-500 font-bold">mm</span></div>
+          </div>
+          <div class="flex items-center space-x-2 py-0.5 select-none"><span id="rng-min-rj" class="text-[9px] text-slate-400 w-6 text-right font-semibold"></span><input type="range" id="rng-val-rj" class="flex-1 h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 touch-none" oninput="syncSlider('rj', this.value)" onchange="commitField('rj')" /><span id="rng-max-rj" class="text-[9px] text-slate-400 w-8 font-semibold"></span></div>
+          <div class="flex items-center justify-between pt-1.5 border-t border-dashed border-slate-100"><span class="text-[9px] font-bold text-slate-400 uppercase tracking-wider">許容公差</span>
+            <div class="flex items-center space-x-2">
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-blue-500">+</span><input type="number" step="0.1" id="num-tol-p-rj" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('rj', 'tp', this.value)" onblur="commitField('rj')" /></div>
+              <div class="flex items-center space-x-1 bg-slate-50 px-1.5 py-0.5 border border-slate-200 rounded-md"><span class="text-[9px] font-bold text-slate-500">-</span><input type="number" step="0.1" id="num-tol-m-rj" class="w-9 text-center text-xs font-semibold bg-transparent border-none outline-none" placeholder="0" oninput="updateTol('rj', 'tm', this.value)" onblur="commitField('rj')" /></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="no-advanced-msg" class="p-6 text-center text-xs font-semibold text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200 hidden">
+          標準1段開先には追加設定項目はありません
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const pipeSpecs = [
+      { label: "カスタム設定 (自由手動入力)", od: null, t: null },
+      { label: "10B (267.4) sch40", od: 267.4, t: 9.3 },
+      { label: "10B (267.4) sch80", od: 267.4, t: 15.1 },
+      { label: "10B (267.4) sch120", od: 267.4, t: 21.4 },
+      { label: "10B (267.4) sch160", od: 267.4, t: 28.6 },
+      { label: "2B (60.5) sch40", od: 60.5, t: 3.9 },
+      { label: "2B (60.5) sch80", od: 60.5, t: 5.5 },
+      { label: "2B (60.5) sch160", od: 60.5, t: 8.7 },
+      { label: "3B (89.1) sch40", od: 89.1, t: 5.5 },
+      { label: "3B (89.1) sch80", od: 89.1, t: 7.6 },
+      { label: "3B (89.1) sch160", od: 89.1, t: 11.1 },
+      { label: "4B (114.3) sch40", od: 114.3, t: 6.0 },
+      { label: "4B (114.3) sch80", od: 114.3, t: 8.6 },
+      { label: "4B (114.3) sch160", od: 114.3, t: 13.5 },
+      { label: "6B (165.2) sch40", od: 165.2, t: 7.1 },
+      { label: "6B (165.2) sch80", od: 165.2, t: 11.0 },
+      { label: "6B (165.2) sch160", od: 165.2, t: 18.2 },
+      { label: "8B (216.3) sch40", od: 216.3, t: 8.2 },
+      { label: "8B (216.3) sch80", od: 216.3, t: 12.7 },
+      { label: "8B (216.3) sch160", od: 216.3, t: 23.0 },
+      { label: "12B (318.5) sch40", od: 318.5, t: 10.3 },
+      { label: "12B (318.5) sch80", od: 318.5, t: 17.4 },
+      { label: "12B (318.5) sch120", od: 318.5, t: 25.4 },
+      { label: "12B (318.5) sch160", od: 318.5, t: 33.3 },
+      { label: "14B (355.6) sch40", od: 355.6, t: 11.1 },
+      { label: "14B (355.6) sch80", od: 355.6, t: 19.0 },
+      { label: "14B (355.6) sch160", od: 355.6, t: 35.7 },
+      { label: "16B (406.4) sch40", od: 406.4, t: 12.7 },
+      { label: "16B (406.4) sch80", od: 406.4, t: 21.4 },
+      { label: "16B (406.4) sch160", od: 406.4, t: 40.5 },
+      { label: "20B (508.0) sch40", od: 508.0, t: 15.1 },
+      { label: "20B (508.0) sch80", od: 508.0, t: 26.2 },
+      { label: "20B (508.0) sch160", od: 508.0, t: 50.0 },
+      { label: "24B (609.6) sch40", od: 609.6, t: 17.5 },
+      { label: "24B (609.6) sch80", od: 609.6, t: 31.0 },
+      { label: "24B (609.6) sch160", od: 609.6, t: 59.5 },
+      { label: "32B (812.8) sch40", od: 812.8, t: 21.4 },
+      { label: "32B (812.8) sch80", od: 812.8, t: 40.5 },
+      { label: "32B (812.8) sch160", od: 812.8, t: 78.6 }
+    ];
+
+    const formatNumber = (numStr) => {
+      if (numStr === null || numStr === undefined || numStr === '') return '';
+      const n = parseFloat(numStr);
+      if (isNaN(n)) return '';
+      let s = n.toFixed(2);
+      s = s.replace(/\.00$/, '');
+      if (s.includes('.')) s = s.replace(/0$/, '');
+      return s;
+    };
+    const rad = (deg) => (deg * Math.PI) / 180;
+
+    // デフォルトを 10B sch160 (OD:267.4, t:28.6, ID:210.2) に設定
+    const initialParams = {
+      shape: 'V2',
+      od: { val: '267.4', tp: '', tm: '' },       
+      id: { val: '210.2', tp: '', tm: '' },       
+      t: { val: '28.6', tp: '', tm: '' },         
+      f: { val: '1.5', tp: '1.0', tm: '1.0' },    
+      a1: { val: '37.5', tp: '2.5', tm: '2.5' },  
+      boreEnabled: false,
+      idBore: { val: '212.0', tp: '', tm: '' },   
+      lBore: { val: '10.0', tp: '', tm: '' },     
+      aBore: { val: '15.0', tp: '', tm: '' },     
+      a2: { val: '10.0', tp: '2.5', tm: '2.5' },
+      a3: { val: '5.0', tp: '2.5', tm: '2.5' },
+      h1: { val: '19.0', tp: '1.0', tm: '1.0' },
+      h2: { val: '25.0', tp: '1.0', tm: '1.0' },
+      r: { val: '3.0', tp: '0.5', tm: '0.5' },
+      rj: { val: '3.0', tp: '0.5', tm: '0.5' }
+    };
+
+    let state = JSON.parse(JSON.stringify(initialParams));
+    let tempState = JSON.parse(JSON.stringify(initialParams));
+
+    const shapeNames = {
+      'V': 'V形開先', 'V2': 'V二段開先', 'V3': 'V三段開先', 'U': 'U形開先', 'U2': 'U二段開先'
+    };
+
+    function getLimits() {
+      const od = parseFloat(state.od.val) || 267.4;
+      const t = parseFloat(state.t.val) || 28.6;
+      const f = parseFloat(state.f.val) || 1.5;
+      const id = parseFloat(state.id.val) || 210.2;
+      const maxIdBore = id + (2 * f) - 0.2;
+
+      return {
+        od: { min: 30.0, max: 1500.0, step: 0.1 },
+        id: { min: 20.0, max: od - 1.0, step: 0.1 },
+        t: { min: 1.0, max: od / 2 - 1.0, step: 0.1 },
+        f: { min: 0.5, max: Math.max(0.5, t - 1.0), step: 0.1 },
+        a1: { min: 0, max: 80, step: 0.5 },
+        idBore: { min: id + 0.1, max: maxIdBore, step: 0.1 },
+        lBore: { min: 0.0, max: 30.0, step: 0.5 },
+        aBore: { min: 0.0, max: 30.0, step: 0.5 },
+        h1: { min: 0.5, max: 200, step: 0.5 },
+        h2: { min: 0.5, max: 200, step: 0.5 },
+        a2: { min: 0, max: 80, step: 0.5 },
+        a3: { min: 0, max: 80, step: 0.5 },
+        r: { min: 0.5, max: Math.max(1, t - 0.5), step: 0.5 },
+        rj: { min: 0.5, max: 20, step: 0.5 }
+      };
+    }
+
+    function normalizeLimits() {
+      const od = parseFloat(state.od.val) || 267.4;
+      const t = parseFloat(state.t.val) || 28.6;
+      const f = parseFloat(state.f.val) || 1.5;
+      const id = parseFloat(state.id.val) || 210.2;
+      let idBore = parseFloat(state.idBore.val) || (id + 2.0);
+      let needsUpdate = false;
+      
+      if (f >= t) { state.f.val = (t / 5).toFixed(1); needsUpdate = true; }
+      
+      const maxIdBore = id + (2 * f) - 0.2;
+      if (idBore <= id) { state.idBore.val = (id + 1.0).toFixed(1); needsUpdate = true; } 
+      else if (idBore > maxIdBore) { state.idBore.val = maxIdBore.toFixed(1); needsUpdate = true; }
+
+      if (needsUpdate) tempState = JSON.parse(JSON.stringify(state));
+    }
+
+    function toggleSection(secId, iconId) {
+      const el = document.getElementById(secId);
+      const icon = document.getElementById(iconId);
+      if (el.classList.contains('hidden')) {
+        el.classList.remove('hidden'); icon.style.transform = 'rotate(180deg)';
+      } else {
+        el.classList.add('hidden'); icon.style.transform = 'rotate(0deg)';
+      }
+    }
+
+    function toggleBore() {
+      state.boreEnabled = !state.boreEnabled;
+      tempState.boreEnabled = state.boreEnabled;
+      const btn = document.getElementById('btn-bore-toggle');
+      const circle = document.getElementById('btn-bore-circle');
+      const paramsGroup = document.getElementById('bore-params-group');
+      if (state.boreEnabled) {
+        btn.classList.replace('bg-slate-300', 'bg-blue-600'); circle.classList.replace('left-0.5', 'translate-x-6');
+        paramsGroup.classList.remove('opacity-40', 'pointer-events-none');
+      } else {
+        btn.classList.replace('bg-blue-600', 'bg-slate-300'); circle.classList.replace('translate-x-6', 'left-0.5');
+        paramsGroup.classList.add('opacity-40', 'pointer-events-none');
+      }
+      draw();
+    }
+
+    function onSpecChange(val) {
+      if (val === "0" || val === "") return;
+      const spec = pipeSpecs[parseInt(val)];
+      if (spec && spec.od !== null) {
+        state.od.val = spec.od.toFixed(1);
+        state.t.val = spec.t.toFixed(1);
+        state.id.val = (spec.od - 2 * spec.t).toFixed(1);
+        const minIdBore = parseFloat(state.id.val) + 1.5;
+        state.idBore.val = minIdBore.toFixed(1);
+        tempState = JSON.parse(JSON.stringify(state));
+        normalizeLimits(); updateControlsUI(); draw();
+      }
+    }
+
+    function setToCustomSpec() {
+      const sel = document.getElementById('spec-selector');
+      if (sel) sel.value = "0"; 
+    }
+
+    function changeShape(shapeKey) {
+      state.shape = shapeKey;
+      tempState.shape = shapeKey;
+      document.querySelectorAll('.btn-shape').forEach(btn => {
+        btn.className = "btn-shape py-2 rounded-lg text-xs font-bold transition-all duration-150 active:scale-95 text-center border bg-slate-50 text-slate-600 border-slate-200";
+      });
+      const activeBtn = document.getElementById(`btn-shape-${shapeKey}`);
+      if (activeBtn) activeBtn.className = "btn-shape py-2 rounded-lg text-xs font-bold transition-all duration-150 active:scale-95 text-center border bg-blue-600 text-white shadow-md border-blue-600";
+      document.getElementById('status-shape-name').innerText = `開先種別: ${shapeNames[shapeKey]}`;
+      normalizeLimits(); updateControlsUI(); draw();
+    }
+
+    function draw() {
+      const errOverlay = document.getElementById('error-overlay');
+      const errMessage = document.getElementById('error-message');
+      const svgContent = document.getElementById('svg-content');
+      const p = {
+        shape: state.shape, t: parseFloat(state.t.val) || 0, f: parseFloat(state.f.val) || 0,
+        a1: parseFloat(state.a1.val) || 0, a2: parseFloat(state.a2.val) || 0, a3: parseFloat(state.a3.val) || 0,
+        h1: parseFloat(state.h1.val) || 0, h2: parseFloat(state.h2.val) || 0, r: parseFloat(state.r.val) || 0, rj: parseFloat(state.rj.val) || 0,
+        od: parseFloat(state.od.val) || 267.4, id: parseFloat(state.id.val) || 210.2,
+        idBore: parseFloat(state.idBore.val) || 212.0, lBore: parseFloat(state.lBore.val) || 0, aBore: parseFloat(state.aBore.val) || 0,
+      };
+
+      if (p.t <= 0) { errOverlay.classList.remove('hidden'); errMessage.innerText = "配管肉厚は0より大きくしてください。"; return; }
+      if (p.f >= p.t) { errOverlay.classList.remove('hidden'); errMessage.innerText = "ルート面高さは肉厚より小さくしてください。"; return; }
+      errOverlay.classList.add('hidden');
+
+      const c = state.boreEnabled ? (p.idBore - p.id) / 2 : 0;
+      let deltaL = 0;
+      if (state.boreEnabled && p.aBore > 0) deltaL = c / Math.tan(rad(p.aBore));
+      const lTotal = p.lBore + deltaL; 
+
+      let profile = []; let stepsForDim = []; let joints = [];
+      let cx = 0; let cy = p.f; 
+      profile.push({ x: 0, y: c });
+
+      if (p.shape === 'V') {
+        let x1 = cx + (p.t - p.f) * Math.tan(rad(p.a1));
+        profile.push({ x: x1, y: p.t });
+        stepsForDim.push({ startX: cx, startY: cy, endX: x1, endY: p.t, a: p.a1, aTp: state.a1.tp, aTm: state.a1.tm });
+      } 
+      else if (p.shape === 'V2') {
+        let y1 = Math.min(p.h1, p.t);
+        let x1 = cx + (y1 - cy) * Math.tan(rad(p.a1));
+        let d = p.rj * Math.abs(Math.tan((rad(p.a1) - rad(p.a2)) / 2));
+        profile.push({ x: x1 - d * Math.sin(rad(p.a1)), y: y1 - d * Math.cos(rad(p.a1)) });
+        profile.push({ arc: true, r: p.rj, x: x1 + d * Math.sin(rad(p.a2)), y: y1 + d * Math.cos(rad(p.a2)), sweep: 0 });
+        stepsForDim.push({ startX: cx, startY: cy, endX: x1, endY: p.h1, h: p.h1, hStart: cy, hTp: state.h1.tp, hTm: state.h1.tm, a: p.a1, aTp: state.a1.tp, aTm: state.a1.tm });
+        if (p.h1 < p.t) {
+          joints.push({ x: x1, y: y1 }); let x2 = x1 + (p.t - y1) * Math.tan(rad(p.a2)); profile.push({ x: x2, y: p.t });
+          stepsForDim.push({ startX: x1, startY: y1, endX: x2, endY: p.t, a: p.a2, aTp: state.a2.tp, aTm: state.a2.tm });
+        }
+      }
+      else if (p.shape === 'V3') {
+        let y1 = Math.min(p.h1, p.t); let x1 = cx + (y1 - cy) * Math.tan(rad(p.a1));
+        let d1 = p.rj * Math.abs(Math.tan((rad(p.a1) - rad(p.a2)) / 2));
+        profile.push({ x: x1 - d1*Math.sin(rad(p.a1)), y: y1 - d1*Math.cos(rad(p.a1)) });
+        profile.push({ arc: true, r: p.rj, x: x1 + d1*Math.sin(rad(p.a2)), y: y1 + d1*Math.cos(rad(p.a2)), sweep: 0 });
+        stepsForDim.push({ startX: cx, startY: cy, endX: x1, endY: p.h1, h: p.h1, hStart: cy, hTp: state.h1.tp, hTm: state.h1.tm, a: p.a1, aTp: state.a1.tp, aTm: state.a1.tm });
+        
+        if (p.h1 < p.t) {
+          joints.push({ x: x1, y: y1 }); let y2 = Math.min(p.h2, p.t);
+          if (y2 > y1) {
+            let x2 = x1 + (y2 - y1) * Math.tan(rad(p.a2));
+            let d2 = p.rj * Math.abs(Math.tan((rad(p.a2) - rad(p.a3)) / 2));
+            profile.push({ x: x2 - d2*Math.sin(rad(p.a2)), y: y2 - d2*Math.cos(rad(p.a2)) });
+            profile.push({ arc: true, r: p.rj, x: x2 + d2*Math.sin(rad(p.a3)), y: y2 + d2*Math.cos(rad(p.a3)), sweep: 0 });
+            stepsForDim.push({ startX: x1, startY: y1, endX: x2, endY: p.h2, h: p.h2, hStart: y1, hTp: state.h2.tp, hTm: state.h2.tm, a: p.a2, aTp: state.a2.tp, aTm: state.a2.tm });
+            if (p.h2 < p.t) {
+              joints.push({ x: x2, y: y2 }); let x3 = x2 + (p.t - y2) * Math.tan(rad(p.a3)); profile.push({ x: x3, y: p.t });
+              stepsForDim.push({ startX: x2, startY: y2, endX: x3, endY: p.t, a: p.a3, aTp: state.a3.tp, aTm: state.a3.tm });
+            }
+          }
+        }
+      }
+      else if (p.shape === 'U') {
+        let px = p.r - p.r * Math.cos(rad(p.a1)); let py = cy + p.r * Math.sin(rad(p.a1)); let cY = Math.min(py, p.t);
+        profile.push({ arc: true, r: p.r, x: px, y: cY, sweep: 1 });
+        if (py < p.t) {
+          let x1 = px + (p.t - py) * Math.tan(rad(p.a1)); profile.push({ x: x1, y: p.t });
+          stepsForDim.push({ startX: px, startY: py, endX: x1, endY: p.t, a: p.a1, aTp: state.a1.tp, aTm: state.a1.tm });
+        }
+      }
+      else if (p.shape === 'U2') {
+        let px = p.r - p.r * Math.cos(rad(p.a1)); let py = cy + p.r * Math.sin(rad(p.a1)); let cY = Math.min(py, p.t);
+        profile.push({ arc: true, r: p.r, x: px, y: cY, sweep: 1 });
+        if (py < p.t) {
+          let y1 = Math.min(p.h1, p.t); let x1 = px + (y1 - py) * Math.tan(rad(p.a1));
+          let d = p.rj * Math.abs(Math.tan((rad(p.a1) - rad(p.a2)) / 2));
+          profile.push({ x: x1 - d * Math.sin(rad(p.a1)), y: y1 - d * Math.cos(rad(p.a1)) });
+          profile.push({ arc: true, r: p.rj, x: x1 + d * Math.sin(rad(p.a2)), y: y1 + d * Math.cos(rad(p.a2)), sweep: 0 });
+          stepsForDim.push({ startX: px, startY: py, endX: x1, endY: p.h1, h: p.h1, hStart: cy, hTp: state.h1.tp, hTm: state.h1.tm, a: p.a1, aTp: state.a1.tp, aTm: state.a1.tm });
+          if (p.h1 < p.t) {
+            joints.push({ x: x1, y: y1 }); let x2 = x1 + (p.t - y1) * Math.tan(rad(p.a2)); profile.push({ x: x2, y: p.t });
+            stepsForDim.push({ startX: x1, startY: y1, endX: x2, endY: p.t, a: p.a2, aTp: state.a2.tp, aTm: state.a2.tm });
+          }
+        }
+      }
+
+      const maxX = stepsForDim.length > 0 ? stepsForDim[stepsForDim.length - 1].endX : 0;
+      const pipeLength = Math.max(maxX + 45, lTotal + 45, 80);
+      const stepCount = stepsForDim.length;
+
+      const logicalMinX = -110; 
+      const logicalMaxX = pipeLength + 30;
+      const logicalWidth = logicalMaxX - logicalMinX;
+
+      const logicalMinY = -65;
+      const maxAngleRadius = 55 + (stepCount > 0 ? stepCount - 1 : 0) * 22;
+      const logicalMaxY = p.t + c + maxAngleRadius + 35;
+      const logicalHeight = logicalMaxY - logicalMinY;
+
+      const svgW = 600, svgH = 340;
+      const scale = Math.min((svgW * 0.90) / logicalWidth, (svgH * 0.82) / logicalHeight, 35);
+      const offsetX = 300 - scale * (logicalMinX + logicalMaxX) / 2;
+      const offsetY = 170 + scale * (logicalMinY + logicalMaxY) / 2; 
+      const mapX = (x) => offsetX + x * scale;
+      const mapY = (y) => offsetY - y * scale;
+
+      let pathD = `M ${mapX(0)} ${mapY(p.f + c)} `;
+      for (let i = 1; i < profile.length; i++) {
+        let pt = profile[i];
+        if (pt.arc) pathD += `A ${pt.r * scale} ${pt.r * scale} 0 0 ${pt.sweep !== undefined ? pt.sweep : 0} ${mapX(pt.x)} ${mapY(pt.y)} `;
+        else pathD += `L ${mapX(pt.x)} ${mapY(pt.y)} `;
+      }
+      
+      pathD += `L ${mapX(pipeLength)} ${mapY(p.t + c)} `;
+      for (let i = 1; i <= 6; i++) {
+        const cy = p.t + c - (p.t / 6) * i; const cx = pipeLength + (i % 2 === 0 ? 0 : 3.2 / scale);
+        pathD += `L ${mapX(cx)} ${mapY(cy)} `;
+      }
+      
+      if (state.boreEnabled) {
+        pathD += `L ${mapX(lTotal)} ${mapY(0)} `;
+        if (deltaL > 0) pathD += `L ${mapX(p.lBore)} ${mapY(c)} `;
+        pathD += `L ${mapX(0)} ${mapY(c)} `;
+      } else {
+        pathD += `L ${mapX(0)} ${mapY(0)} `;
+      }
+      pathD += `Z`;
+
+      const fA1 = formatNumber(p.a1); const fA2 = formatNumber(p.a2); const fA3 = formatNumber(p.a3);
+      const fR = formatNumber(p.r); const fRj = formatNumber(p.rj);
+
+      let bevelCode = '';
+      if (p.shape === 'V') bevelCode = `${fA1}°`;
+      else if (p.shape === 'V2') bevelCode = `${fA1}°- ${fRj}R - ${fA2}°`;
+      else if (p.shape === 'V3') bevelCode = `${fA1}°- ${fRj}R - ${fA2}°- ${fRj}R - ${fA3}°`;
+      else if (p.shape === 'U') bevelCode = `${fR}R - ${fA1}°`;
+      else if (p.shape === 'U2') bevelCode = `${fR}R - ${fA1}°- ${fRj}R - ${fA2}°`;
+
+      const sel = document.getElementById('spec-selector');
+      let specLabel = "カスタム設定";
+      if (sel && sel.value !== "0") {
+        specLabel = pipeSpecs[parseInt(sel.value)].label;
+      }
+      const specText = `${specLabel} / OD: ${formatNumber(p.od)}mm`;
+
+      let markup = `
+        <line x1="${mapX(-105)}" y1="${mapY(-10)}" x2="${mapX(-105)}" y2="${mapY(p.t + c) + 30}" stroke="#ef4444" stroke-width="1.2" stroke-dasharray="10 4 2 4" />
+        <text x="${mapX(-105)}" y="${mapY(-14)}" text-anchor="middle" font-size="8" fill="#ef4444" font-weight="black">CL</text>
+        <g stroke="#cbd5e1" stroke-width="0.75" fill="none" opacity="0.8">
+          <path d="M ${mapX(-55)} ${mapY(-15)} C ${mapX(-58)} ${mapY(-10)}, ${mapX(-52)} ${mapY(0)}, ${mapX(-55)} ${mapY(10)} C ${mapX(-58)} ${mapY(20)}, ${mapX(-52)} ${mapY(30)}, ${mapX(-55)} ${mapY(45)}" />
+          <path d="M ${mapX(-55)} ${mapY(p.t + c - 30)} C ${mapX(-58)} ${mapY(p.t + c - 20)}, ${mapX(-52)} ${mapY(p.t + c - 10)}, ${mapX(-55)} ${mapY(p.t + c)} C ${mapX(-58)} ${mapY(p.t + c + 10)}, ${mapX(-52)} ${mapY(p.t + c + 20)}, ${mapX(-55)} ${mapY(p.t + c + 35)}" />
+        </g>
+        <line x1="${mapX(0)}" y1="${mapY(-10)}" x2="${mapX(0)}" y2="${mapY(p.t + c) - 80}" stroke="#ef4444" stroke-width="1" stroke-dasharray="6 3 1 3" opacity="0.4" />
+        <text x="${mapX(0)}" y="${mapY(-14)}" text-anchor="middle" font-size="7" fill="#ef4444" font-weight="bold">ルート面</text>
+        
+        <g transform="translate(18, 20)">
+          <rect x="0" y="0" width="230" height="42" fill="#fff" stroke="#475569" stroke-width="1" rx="2" opacity="0.9" />
+          <text x="115" y="18" text-anchor="middle" font-size="12" font-weight="black" fill="#0f172a">${bevelCode}</text>
+          <text x="115" y="34" text-anchor="middle" font-size="8" fill="#475569" font-weight="bold">${specText}</text>
+        </g>
+        <path d="${pathD}" fill="url(#hatch-beveled)" stroke="#0f172a" stroke-width="1.5" stroke-linejoin="round" />
+      `;
+
+      function renderText(x, y, val, align='bottom', anchor='middle', unit='', color='#0f172a') {
+        return `<g transform="translate(${x}, ${y})"><text x="0" y="${align === 'bottom' ? -4 : (align === 'middle' ? 4 : 12)}" text-anchor="${anchor}" font-size="12" font-family="sans-serif" font-weight="bold" fill="${color}">${formatNumber(val)}${unit}</text></g>`;
+      }
+      function renderVerticalDim(sx, sy1, sy2, lineSx1, lineSx2, val, textOffsetX=8) {
+        return `<g>
+          ${lineSx1 !== undefined ? `<line x1="${lineSx1}" y1="${sy1}" x2="${sx - Math.sign(sx - lineSx1) * 6}" y2="${sy1}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="2 2" />` : ''}
+          ${lineSx2 !== undefined ? `<line x1="${lineSx2}" y1="${sy2}" x2="${sx - Math.sign(sx - lineSx2) * 6}" y2="${sy2}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="2 2" />` : ''}
+          <line x1="${sx}" y1="${sy1 + 2}" x2="${sx}" y2="${sy2 - 2}" stroke="#0f172a" stroke-width="1" marker-start="url(#arrow-start)" marker-end="url(#arrow-end)" />
+          ${renderText(sx + textOffsetX, (sy1 + sy2) / 2, val, 'middle', (textOffsetX < 0 ? 'end' : 'start'))}
+        </g>`;
+      }
+      function renderHorizontalDim(sy, sx1, sx2, lineSy1, lineSy2, val, unit='', dir='top', color='#0f172a', startArrow=true) {
+        const ext = dir === 'top' ? -4 : 4;
+        const markerEnd = color === '#0f172a' ? 'url(#arrow-end)' : 'url(#arrow-end-blue)';
+        const markerStart = color === '#0f172a' ? (startArrow ? 'url(#arrow-start)' : '') : (startArrow ? 'url(#arrow-start-blue)' : '');
+        return `<g>
+          ${lineSy1 !== undefined ? `<line x1="${sx1}" y1="${lineSy1}" x2="${sx1}" y2="${sy + ext}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="2 2" />` : ''}
+          ${lineSy2 !== undefined ? `<line x1="${sx2}" y1="${lineSy2}" x2="${sx2}" y2="${sy + ext}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="2 2" />` : ''}
+          <line x1="${sx1 + (startArrow ? 2 : 0)}" y1="${sy}" x2="${sx2 - 2}" y2="${sy}" stroke="${color}" stroke-width="1" marker-start="${markerStart}" marker-end="${markerEnd}" />
+          ${renderText((sx1 + sx2) / 2, sy, val, 'bottom', 'middle', unit, color)}
+        </g>`;
+      }
+      function renderAngleDim(scx, scy, angleDeg, val, r=55) {
+        const radAngle = angleDeg * Math.PI / 180; const extLength = r + 16;
+        const sx = scx + extLength * Math.sin(radAngle); const sy = scy - extLength * Math.cos(radAngle);
+        const ax2 = scx + r * Math.sin(radAngle); const ay2 = scy - r * Math.cos(radAngle);
+        const tx = scx + (r + 13) * Math.sin(radAngle / 2); const ty = scy - (r + 13) * Math.cos(radAngle / 2);
+        return `<g>
+          <line x1="${scx}" y1="${scy}" x2="${scx}" y2="${scy - extLength}" stroke="#64748b" stroke-width="0.75" stroke-dasharray="4 2 1 2" />
+          <line x1="${scx}" y1="${scy}" x2="${sx}" y2="${sy}" stroke="#64748b" stroke-width="0.75" />
+          <path d="M ${scx} ${scy - r} A ${r} ${r} 0 0 1 ${ax2} ${ay2}" fill="none" stroke="#0f172a" stroke-width="1" marker-start="url(#arrow-start)" marker-end="url(#arrow-end)" />
+          ${renderText(tx, ty + 1, val, 'middle', 'middle', '°')}
+        </g>`;
+      }
+      function renderRadiusDim(scx, scy, sax, say, rVal) {
+        return `<g>
+          <line x1="${scx - 4}" y1="${scy}" x2="${scx + 4}" y2="${scy}" stroke="#94a3b8" stroke-width="1" />
+          <line x1="${scx}" y1="${scy - 4}" x2="${scx}" y2="${scy + 4}" stroke="#94a3b8" stroke-width="1" />
+          <line x1="${scx}" y1="${scy}" x2="${sax}" y2="${say}" stroke="#0f172a" stroke-width="1" marker-end="url(#arrow-end)" />
+          ${renderText(scx + (sax - scx) * 0.6, say + (scy - say) * 0.4 + 4, `R${formatNumber(rVal)}`, 'middle', 'middle')}
+        </g>`;
+      }
+
+      markup += renderVerticalDim(mapX(-90), mapY(p.t + c), mapY(-55), mapX(pipeLength), mapX(-105), p.od, -14);
+      markup += `<text x="${mapX(-90) - 3}" y="${(mapY(p.t + c) + mapY(-55))/2 + 4}" text-anchor="end" font-size="8" font-weight="extrabold" fill="#475569">外径 φ</text>`;
+      markup += renderVerticalDim(mapX(-60), mapY(c), mapY(-55), mapX(0), mapX(-105), p.id, -14);
+      markup += `<text x="${mapX(-60) - 3}" y="${(mapY(c) + mapY(-55))/2 + 4}" text-anchor="end" font-size="8" font-weight="extrabold" fill="#475569">内径 φ</text>`;
+
+      if (state.boreEnabled) {
+        markup += renderVerticalDim(mapX(-30), mapY(c), mapY(-55), mapX(0), mapX(-105), p.idBore, 8);
+        markup += `<text x="${mapX(-30) + 30}" y="${(mapY(c) + mapY(-55))/2 + 4}" text-anchor="start" font-size="8" font-weight="black" fill="#2563eb">加工内径 φ</text>`;
+      }
+
+      const vSpacing = 32;
+      let hIndex = 0;
+      stepsForDim.forEach((step) => {
+        if (step.h !== undefined) {
+          markup += renderVerticalDim(mapX(pipeLength) + 25 + hIndex * vSpacing, mapY(step.hStart !== undefined ? step.hStart : step.startY), mapY(step.endY), mapX(step.endX), mapX(pipeLength), step.h);
+          hIndex++;
+        }
+      });
+      
+      markup += renderVerticalDim(mapX(0) - 18, mapY(c), mapY(c + p.f), mapX(0), mapX(0), state.f.val, -14);
+      markup += renderVerticalDim(mapX(pipeLength) + 25 + hIndex * vSpacing, mapY(c), mapY(c + p.t), mapX(pipeLength), mapX(pipeLength), state.t.val);
+
+      stepsForDim.forEach((step, i) => {
+        markup += renderHorizontalDim(mapY(p.t + c) - 45 - i * 28, mapX(0), mapX(step.endX), mapY(c + p.f), mapY(step.endY), step.endX, '', 'top');
+        markup += renderAngleDim(mapX(step.startX), mapY(step.startY), step.a, step.a, 55 + i * 22);
+      });
+
+      if (['U', 'U2'].includes(state.shape)) {
+        markup += renderRadiusDim(mapX(p.r), mapY(c + p.f), mapX(p.r - p.r * Math.cos(rad(p.a1)/2)), mapY(c + p.f + p.r * Math.sin(rad(p.a1)/2)), state.r.val);
+      }
+
+      if (['V2', 'V3', 'U2'].includes(state.shape)) {
+        const prefix = state.shape === 'V3' ? `2-R` : `R`;
+        joints.forEach((joint, i) => {
+          if (state.shape === 'V3' && i > 0) return; 
+          markup += `<g transform="translate(${mapX(joint.x) + 10}, ${mapY(joint.y) + 12})"><text x="0" y="0" font-size="11" font-weight="900" fill="#2563eb" stroke="#ffffff" stroke-width="2.5" paint-order="stroke fill" stroke-linejoin="round" text-anchor="start">${prefix}${formatNumber(state.rj.val)}</text></g>`;
+        });
+      }
+
+      if (state.boreEnabled) {
+        const boreDimY1 = mapY(0) + 15;
+        markup += renderHorizontalDim(boreDimY1, mapX(0), mapX(p.lBore), mapY(c), mapY(c), p.lBore, '', 'bottom', '#2563eb', false);
+        markup += `<line x1="${mapX(p.lBore)}" y1="${mapY(c)}" x2="${mapX(p.lBore)}" y2="${boreDimY1 + 4}" stroke="#94a3b8" stroke-width="0.8" stroke-dasharray="2 2" />`;
+        markup += `<text x="${mapX(p.lBore) + 4}" y="${boreDimY1 + 10}" font-size="8" font-weight="bold" fill="#2563eb">平行加工代</text>`;
+
+        if (p.aBore > 0) {
+          const boreDimY2 = mapY(0) + 35;
+          markup += renderHorizontalDim(boreDimY2, mapX(0), mapX(lTotal), mapY(0), mapY(0), lTotal, '', 'bottom', '#2563eb', false);
+          markup += `<line x1="${mapX(lTotal)}" y1="${mapY(0)}" x2="${mapX(lTotal)}" y2="${boreDimY2 + 4}" stroke="#94a3b8" stroke-width="0.8" stroke-dasharray="2 2" />`;
+          markup += `<text x="${mapX(lTotal) + 4}" y="${boreDimY2 + 10}" font-size="8" font-weight="black" fill="#2563eb">L (総加工距離)</text>`;
+          markup += `<g opacity="0.8"><path d="M ${mapX(p.lBore)} ${mapY(c)} L ${mapX(lTotal)} ${mapY(c)}" stroke="#64748b" stroke-width="0.75" stroke-dasharray="2 2" /><text x="${mapX(p.lBore + deltaL * 0.4)}" y="${mapY(c * 0.3) + 14}" text-anchor="middle" font-size="9" font-weight="bold" fill="#2563eb">${p.aBore}°</text></g>`;
+        }
+      }
+      svgContent.innerHTML = markup;
+    }
+
+    function updateVal(name, value) { 
+      setToCustomSpec(); tempState[name].val = value; 
+      const rng = document.getElementById(`rng-val-${name}`); if (rng) rng.value = value; 
+      if (name === 'od') { tempState.id.val = ((parseFloat(value)||0) - 2 * (parseFloat(tempState.t.val)||0)).toFixed(1); }
+      else if (name === 't') { tempState.id.val = ((parseFloat(tempState.od.val)||0) - 2 * (parseFloat(value)||0)).toFixed(1); }
+      else if (name === 'id') { tempState.t.val = Math.max(0.1, ((parseFloat(tempState.od.val)||0) - (parseFloat(value)||0)) / 2).toFixed(1); }
+    }
+
+    function updateTol(name, field, value) { tempState[name][field] = value; }
+
+    function syncSlider(name, value) { 
+      setToCustomSpec(); tempState[name].val = value; 
+      const numInput = document.getElementById(`num-val-${name}`); if (numInput) numInput.value = value; 
+      if (name === 'od') { tempState.id.val = ((parseFloat(value)||0) - 2 * (parseFloat(tempState.t.val)||0)).toFixed(1); }
+      else if (name === 't') { tempState.id.val = ((parseFloat(tempState.od.val)||0) - 2 * (parseFloat(value)||0)).toFixed(1); }
+      else if (name === 'id') { tempState.t.val = Math.max(0.1, ((parseFloat(tempState.od.val)||0) - (parseFloat(value)||0)) / 2).toFixed(1); }
+    }
+
+    function updateControlsUI() {
+      const limitsList = getLimits();
+      const names = ['od', 'id', 't', 'f', 'a1', 'idBore', 'lBore', 'aBore', 'r', 'rj', 'h1', 'h2', 'a2', 'a3'];
+
+      names.forEach(name => {
+        const lim = limitsList[name];
+        if (!lim) return;
+        const minEl = document.getElementById(`rng-min-${name}`);
+        const maxEl = document.getElementById(`rng-max-${name}`);
+        const rngEl = document.getElementById(`rng-val-${name}`);
+        const numEl = document.getElementById(`num-val-${name}`);
+
+        if (minEl) minEl.innerText = lim.min;
+        if (maxEl) maxEl.innerText = formatNumber(lim.max);
+        
+        if (rngEl) {
+          rngEl.min = lim.min; rngEl.max = lim.max; rngEl.step = lim.step;
+          rngEl.value = Math.min(Math.max(parseFloat(tempState[name].val) || 0, lim.min), lim.max);
+        }
+        if (numEl && document.activeElement !== numEl) numEl.value = tempState[name].val;
+
+        const tpEl = document.getElementById(`num-tol-p-${name}`);
+        const tmEl = document.getElementById(`num-tol-m-${name}`);
+        if (tpEl && document.activeElement !== tpEl) tpEl.value = tempState[name].tp || '';
+        if (tmEl && document.activeElement !== tmEl) tmEl.value = tempState[name].tm || '';
+      });
+
+      const showR = ['U', 'U2'].includes(state.shape);
+      const showH1 = ['V2', 'V3', 'U2'].includes(state.shape);
+      const showH2 = ['V3'].includes(state.shape);
+      const showRj = ['V2', 'V3', 'U2'].includes(state.shape);
+
+      document.getElementById('container-field-r').classList.toggle('hidden', !showR);
+      document.getElementById('container-field-h1').classList.toggle('hidden', !showH1);
+      document.getElementById('container-field-a2').classList.toggle('hidden', !showH1);
+      document.getElementById('container-field-h2').classList.toggle('hidden', !showH2);
+      document.getElementById('container-field-a3').classList.toggle('hidden', !showH2);
+      document.getElementById('container-field-rj').classList.toggle('hidden', !showRj);
+
+      const noAdvancedMsg = document.getElementById('no-advanced-msg');
+      if (!showR && !showH1 && !showH2 && !showRj) noAdvancedMsg.classList.remove('hidden'); 
+      else noAdvancedMsg.classList.add('hidden');
+    }
+    
+    function commitField() {
+      state = JSON.parse(JSON.stringify(tempState));
+      normalizeLimits(); updateControlsUI(); draw();
+    }
+    function handleKeyEnter(e) { if (e.key === 'Enter') e.target.blur(); }
+
+    function initSpecSelector() {
+      const sel = document.getElementById('spec-selector');
+      if (!sel) return;
+      sel.innerHTML = pipeSpecs.map((spec, idx) => `<option value="${idx}">${spec.label}</option>`).join('');
+      // 10B sch160 (index 4) をデフォルトで選択
+      sel.value = "4"; 
+    }
+
+    document.getElementById('btn-reset').addEventListener('click', () => {
+      state = JSON.parse(JSON.stringify(initialParams)); tempState = JSON.parse(JSON.stringify(initialParams));
+      const btn = document.getElementById('btn-bore-toggle');
+      const circle = document.getElementById('btn-bore-circle');
+      const paramsGroup = document.getElementById('bore-params-group');
+      btn.className = "w-12 h-6 rounded-full bg-slate-300 relative transition-colors duration-200 focus:outline-none";
+      circle.className = "w-5 h-5 rounded-full bg-white absolute top-0.5 left-0.5 shadow transition-transform duration-200";
+      paramsGroup.className = "space-y-3 opacity-40 pointer-events-none";
+      const sel = document.getElementById('spec-selector'); if (sel) sel.value = "4";
+      changeShape(state.shape);
+    });
+
+    window.onload = () => {
+      initSpecSelector();
+      const paramsGroup = document.getElementById('bore-params-group');
+      paramsGroup.className = "space-y-3 opacity-40 pointer-events-none";
+      changeShape(state.shape);
+    };
+
+    // --- PDF出力機能 (ダウンロード方式) ---
+    document.getElementById('btn-pdf').addEventListener('click', function() {
+      const btn = this;
+      const originalText = btn.innerHTML;
+      
+      // ボタンを処理中のスピナー表示に変更
+      btn.innerHTML = `<svg class="animate-spin w-3 h-3 mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>生成中`;
+      btn.disabled = true;
+
+      const element = document.getElementById('pdf-wrapper');
+      
+      const opt = {
+        margin:       10,
+        filename:     '配管開先図面.pdf',
+        image:        { type: 'jpeg', quality: 1.0 },
+        html2canvas:  { scale: 2 },
+        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' }
+      };
+
+      html2pdf().set(opt).from(element).save().then(() => {
+        // 処理完了後に元のボタン表示に戻す
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+      }).catch(err => {
+        console.error('PDF生成エラー:', err);
+        alert('PDFの出力に失敗しました。');
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+      });
+    });
+  </script>
+</body>
+</html>
